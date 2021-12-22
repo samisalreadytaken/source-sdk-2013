@@ -22,6 +22,7 @@
 #include "materialsystem/imaterialvar.h"
 #include "mapbase/matchers.h"
 #include "mapbase/vscript_singletons.h"
+#include "mapbase/vscript_vgui.h"
 #endif
 
 extern IScriptManager *scriptmanager;
@@ -252,10 +253,7 @@ CScriptMaterialProxy::CScriptMaterialProxy()
 	m_hScriptInstance = NULL;
 	m_hFuncOnBind = NULL;
 
-	for (int i = 0; i < SCRIPT_MAT_PROXY_MAX_VARS; i++)
-	{
-		m_MaterialVars[i] = NULL;
-	}
+	V_memset( m_MaterialVars, 0, sizeof(m_MaterialVars) );
 }
 
 CScriptMaterialProxy::~CScriptMaterialProxy()
@@ -387,13 +385,10 @@ void CScriptMaterialProxy::OnBind( void *pRenderable )
 
 		if (!pEnt)
 		{
-			// Needs to register as a null value so the script doesn't break if it looks for an entity
 			g_pScriptVM->SetValue( m_ScriptScope, "entity", SCRIPT_VARIANT_NULL );
 		}
 
 		m_ScriptScope.Call( m_hFuncOnBind, NULL );
-
-		g_pScriptVM->ClearValue( m_ScriptScope, "entity" );
 	}
 	else
 	{
@@ -542,27 +537,6 @@ static bool IsWindowedMode()
 	return engine->IsWindowedMode();
 }
 
-int ScreenTransform( const Vector& point, Vector& screen );
-
-//-----------------------------------------------------------------------------
-// Input array [x,y], set normalised screen space pos. Return true if on screen
-//-----------------------------------------------------------------------------
-static bool ScriptScreenTransform( const Vector &pos, HSCRIPT hArray )
-{
-	if ( g_pScriptVM->GetNumTableEntries(hArray) >= 2 )
-	{
-		Vector v;
-		bool r = ScreenTransform( pos, v );
-		float x = 0.5f * ( 1.0f + v[0] );
-		float y = 0.5f * ( 1.0f - v[1] );
-
-		g_pScriptVM->SetValue( hArray, ScriptVariant_t(0), x );
-		g_pScriptVM->SetValue( hArray, 1, y );
-		return !r;
-	}
-	return false;
-}
-
 // Creates a client-side prop
 HSCRIPT CreateProp( const char *pszEntityName, const Vector &vOrigin, const char *pszModelName, int iAnim )
 {
@@ -661,7 +635,6 @@ bool VScriptClientInit()
 				ScriptRegisterFunction( g_pScriptVM, ScreenWidth, "Width of the screen in pixels" );
 				ScriptRegisterFunction( g_pScriptVM, ScreenHeight, "Height of the screen in pixels" );
 				ScriptRegisterFunction( g_pScriptVM, IsWindowedMode, "" );
-				ScriptRegisterFunctionNamed( g_pScriptVM, ScriptScreenTransform, "ScreenTransform", "Get the x & y positions of a world position in screen space. Returns true if it's onscreen" );
 
 				ScriptRegisterFunction( g_pScriptVM, MainViewOrigin, "" );
 				ScriptRegisterFunction( g_pScriptVM, MainViewAngles, "" );
@@ -696,6 +669,7 @@ bool VScriptClientInit()
 
 				RegisterSharedScriptConstants();
 				RegisterSharedScriptFunctions();
+				RegisterScriptVGUI();
 #else
 				//g_pScriptVM->RegisterInstance( &g_ScriptEntityIterator, "Entities" );
 #endif
