@@ -507,7 +507,7 @@ public:
 
 	void Destroy()
 	{
-		if ( GetVPanel() )
+		if ( this->GetVPanel() )
 		{
 			Assert( _base );
 #ifdef _DEBUG
@@ -556,17 +556,17 @@ class IScript_Panel : public CScriptVGUIObject<T>
 public:
 	void MakeReadyForUse()
 	{
-		_base->MakeReadyForUse();
+		this->_base->MakeReadyForUse();
 	}
 
 	const char *GetName()
 	{
-		return _base->GetName();
+		return this->_base->GetName();
 	}
 
 	void SetAutoDelete( bool i )
 	{
-		_base->SetAutoDelete(i);
+		this->_base->SetAutoDelete(i);
 	}
 
 	//-----------------------------------------------------
@@ -574,7 +574,7 @@ public:
 	//-----------------------------------------------------
 	HSCRIPT	GetParent()
 	{
-		VPANEL parent = ipanel()->GetParent( GetVPanel() );
+		VPANEL parent = ipanel()->GetParent( this->GetVPanel() );
 		if ( !parent )
 			return NULL;
 
@@ -603,14 +603,14 @@ public:
 	{
 		if ( !parent )
 		{
-			_base->SetParent( DEFAULT_VGUI_PARENT );
+			this->_base->SetParent( DEFAULT_VGUI_PARENT );
 			return;
 		}
 
 		IScriptVGUIObject *obj = (IScriptVGUIObject *)g_pScriptVM->GetInstanceValue( parent, ::GetScriptDesc( (IScriptVGUIObject *)0 ) );
 		if ( obj )
 		{
-			_base->SetParent( obj->GetVPanel() );
+			this->_base->SetParent( obj->GetVPanel() );
 			return;
 		}
 
@@ -622,7 +622,7 @@ public:
 	//-----------------------------------------------------
 	void GetChildren( HSCRIPT arr )
 	{
-		CUtlVector< VPANEL > &children = ipanel()->GetChildren( GetVPanel() );
+		CUtlVector< VPANEL > &children = ipanel()->GetChildren( this->GetVPanel() );
 		FOR_EACH_VEC( children, i )
 		{
 			VPANEL child = children[i];
@@ -641,75 +641,75 @@ public:
 	void GetPos( HSCRIPT out )
 	{
 		int x, y;
-		ipanel()->GetPos( GetVPanel(), x, y );
+		ipanel()->GetPos( this->GetVPanel(), x, y );
 		g_pScriptVM->SetValue( out, (ScriptVariant_t)0, x );
 		g_pScriptVM->SetValue( out, 1, y );
 	}
 
 	void SetPos( int x, int y )
 	{
-		_base->SetPos( x, y );
+		this->_base->SetPos( x, y );
 	}
 
 	void SetZPos( int i )
 	{
-		ipanel()->SetZPos( GetVPanel(), i );
+		ipanel()->SetZPos( this->GetVPanel(), i );
 	}
 
 	int GetZPos()
 	{
-		return ipanel()->GetZPos( GetVPanel() );
+		return ipanel()->GetZPos( this->GetVPanel() );
 	}
 
 	void SetSize( int w, int t )
 	{
-		_base->SetSize( w, t );
+		this->_base->SetSize( w, t );
 	}
 
 	void SetWide( int i )
 	{
-		_base->SetWide(i);
+		this->_base->SetWide(i);
 	}
 
 	int GetWide()
 	{
-		return _base->GetWide();
+		return this->_base->GetWide();
 	}
 
 	void SetTall( int i )
 	{
-		_base->SetTall(i);
+		this->_base->SetTall(i);
 	}
 
 	int GetTall()
 	{
-		return _base->GetTall();
+		return this->_base->GetTall();
 	}
 
 	int GetAlpha()
 	{
-		return _base->GetAlpha();
+		return this->_base->GetAlpha();
 	}
 
 	void SetAlpha( int i )
 	{
-		_base->SetAlpha( i );
+		this->_base->SetAlpha( i );
 	}
 
 	void SetVisible( bool i )
 	{
-		ipanel()->SetVisible( GetVPanel(), i );
+		ipanel()->SetVisible( this->GetVPanel(), i );
 	}
 
 	bool IsVisible()
 	{
-		return ipanel()->IsVisible( GetVPanel() );
+		return ipanel()->IsVisible( this->GetVPanel() );
 	}
 
 	void LocalToScreen( int x, int y, HSCRIPT out )
 	{
 		int px, py;
-		ipanel()->GetAbsPos( GetVPanel(), px, py );
+		ipanel()->GetAbsPos( this->GetVPanel(), px, py );
 
 		g_pScriptVM->SetValue( out, (ScriptVariant_t)0, x + px );
 		g_pScriptVM->SetValue( out, 1, y + py );
@@ -718,7 +718,7 @@ public:
 	void ScreenToLocal( int x, int y, HSCRIPT out )
 	{
 		int px, py;
-		ipanel()->GetAbsPos( GetVPanel(), px, py );
+		ipanel()->GetAbsPos( this->GetVPanel(), px, py );
 
 		g_pScriptVM->SetValue( out, (ScriptVariant_t)0, x - px );
 		g_pScriptVM->SetValue( out, 1, y - py );
@@ -726,73 +726,73 @@ public:
 
 	bool IsWithin( int x, int y )
 	{
-		return _base->IsWithin( x, y );
+		return this->_base->IsWithin( x, y );
 	}
 
 	void AddTickSignal( int i )
 	{
-		ivgui()->AddTickSignal( GetVPanel(), i );
+		ivgui()->AddTickSignal( this->GetVPanel(), i );
 	}
 
 	void RequestFocus()
 	{
-		_base->RequestFocus();
+		this->_base->RequestFocus();
 	}
 
 	void SetEnabled( bool i )
 	{
-		_base->SetEnabled(i);
+		this->_base->SetEnabled(i);
 	}
 
 	bool IsEnabled()
 	{
-		return _base->IsEnabled();
+		return this->_base->IsEnabled();
 	}
 
 	void SetPaintEnabled( bool i )
 	{
-		_base->SetPaintEnabled(i);
+		this->_base->SetPaintEnabled(i);
 	}
 
 	void SetPaintBackgroundEnabled( bool i )
 	{
-		_base->SetPaintBackgroundEnabled(i);
+		this->_base->SetPaintBackgroundEnabled(i);
 	}
 
 	void SetPaintBorderEnabled( bool i )
 	{
-		_base->SetPaintBorderEnabled(i);
+		this->_base->SetPaintBorderEnabled(i);
 	}
 
 	// 0 for normal(opaque), 1 for single texture from Texture1, and 2 for rounded box w/ four corner textures
 	void SetPaintBackgroundType( int i )
 	{
-		_base->SetPaintBackgroundType(i);
+		this->_base->SetPaintBackgroundType(i);
 	}
 
 	void SetFgColor( int r, int g, int b, int a )
 	{
-		_base->SetFgColor( Color( r, g, b, a ) );
+		this->_base->SetFgColor( Color( r, g, b, a ) );
 	}
 
 	void SetBgColor( int r, int g, int b, int a )
 	{
-		_base->SetBgColor( Color( r, g, b, a ) );
+		this->_base->SetBgColor( Color( r, g, b, a ) );
 	}
 
 	bool IsCursorOver()
 	{
-		return _base->IsCursorOver();
+		return this->_base->IsCursorOver();
 	}
 
 	void SetMouseInputEnabled( bool i )
 	{
-		_base->SetMouseInputEnabled(i);
+		this->_base->SetMouseInputEnabled(i);
 	}
 
 	void SetKeyBoardInputEnabled( bool i )
 	{
-		_base->SetKeyBoardInputEnabled(i);
+		this->_base->SetKeyBoardInputEnabled(i);
 	}
 
 	// -----------------------
@@ -800,17 +800,17 @@ public:
 	// -----------------------
 	//void SetRoundedCorners( int cornerFlags )
 	//{
-	//	_base->SetRoundedCorners( cornerFlags & 0xff );
+	//	this->_base->SetRoundedCorners( cornerFlags & 0xff );
 	//}
 
 	void DrawBox( int x, int y, int wide, int tall, int r, int g, int b, int a, bool hollow = false )
 	{
-		_base->DrawBox( x, y, wide, tall, Color(r, g, b, a), 1.0f, hollow );
+		this->_base->DrawBox( x, y, wide, tall, Color(r, g, b, a), 1.0f, hollow );
 	}
 
 	void DrawBoxFade( int x, int y, int wide, int tall, int r, int g, int b, int a, int alpha0, int alpha1, bool bHorizontal, bool hollow = false )
 	{
-		_base->DrawBoxFade( x, y, wide, tall, Color(r, g, b, a), 1.0f, alpha0, alpha1, bHorizontal, hollow );
+		this->_base->DrawBoxFade( x, y, wide, tall, Color(r, g, b, a), 1.0f, alpha0, alpha1, bHorizontal, hollow );
 	}
 #if 0
 	// -----------------------
@@ -818,37 +818,37 @@ public:
 	// -----------------------
 	void SetDragEnabled( bool i )
 	{
-		_base->SetDragEnabled(i);
+		this->_base->SetDragEnabled(i);
 	}
 
 	bool IsDragEnabled()
 	{
-		return _base->IsDragEnabled();
+		return this->_base->IsDragEnabled();
 	}
 
 	void SetDropEnabled( bool i )
 	{
-		_base->SetDropEnabled( i, 0.0f );
+		this->_base->SetDropEnabled( i, 0.0f );
 	}
 
 	bool IsDropEnabled()
 	{
-		return _base->IsDropEnabled();
+		return this->_base->IsDropEnabled();
 	}
 
 	void SetShowDragHelper( int i )
 	{
-		_base->SetShowDragHelper(i);
+		this->_base->SetShowDragHelper(i);
 	}
 
 	int GetDragStartTolerance()
 	{
-		return _base->GetDragStartTolerance();
+		return this->_base->GetDragStartTolerance();
 	}
 
 	void SetDragStartTolerance( int i )
 	{
-		_base->SetDragSTartTolerance(i);
+		this->_base->SetDragSTartTolerance(i);
 	}
 #endif
 };
@@ -917,37 +917,37 @@ public:
 	{
 		static wchar_t wcs[512];
 		g_pVGuiLocalize->ConvertANSIToUnicode( text, wcs, sizeof(wcs) );
-		_base->SetText( wcs );
+		this->_base->SetText( wcs );
 	}
 
 	void SetFont( int i )
 	{
-		_base->SetFont( IntToHandle(i) );
+		this->_base->SetFont( IntToHandle(i) );
 	}
 
 	void SetAllCaps( bool i )
 	{
-		_base->SetAllCaps(i);
+		this->_base->SetAllCaps(i);
 	}
 
 	void SetWrap( bool i )
 	{
-		_base->SetWrap(i);
+		this->_base->SetWrap(i);
 	}
 
 	void SetContentAlignment( int i )
 	{
-		_base->SetContentAlignment( (Label::Alignment)i );
+		this->_base->SetContentAlignment( (Label::Alignment)i );
 	}
 
 	void SetTextInset( int x, int y )
 	{
-		_base->SetTextInset( x, y );
+		this->_base->SetTextInset( x, y );
 	}
 
 	void SizeToContents()
 	{
-		_base->SizeToContents();
+		this->_base->SizeToContents();
 	}
 
 	//void SetAssociatedControl( HSCRIPT control )
@@ -972,107 +972,107 @@ class IScript_Button : public IScript_Label<T>
 public:
 	void SetButtonActivationType( int activationType )
 	{
-		_base->SetButtonActivationType( (Button::ActivationType_t)activationType );
+		this->_base->SetButtonActivationType( (Button::ActivationType_t)activationType );
 	}
 
 	bool IsArmed()
 	{
-		return _base->IsArmed();
+		return this->_base->IsArmed();
 	}
 
 	void SetArmed( bool state )
 	{
-		_base->SetArmed(state);
+		this->_base->SetArmed(state);
 	}
 
 	bool IsSelected()
 	{
-		return _base->IsSelected();
+		return this->_base->IsSelected();
 	}
 
 	void SetSelected( bool state )
 	{
-		_base->SetSelected(state);
+		this->_base->SetSelected(state);
 	}
 
 	bool IsDepressed()
 	{
-		return _base->IsDepressed();
+		return this->_base->IsDepressed();
 	}
 
 	void ForceDepressed( bool state )
 	{
-		_base->ForceDepressed(state);
+		this->_base->ForceDepressed(state);
 	}
 
 	bool IsBlinking()
 	{
-		return _base->IsBlinking();
+		return this->_base->IsBlinking();
 	}
 
 	void SetBlink( bool state )
 	{
-		_base->SetBlink(state);
+		this->_base->SetBlink(state);
 	}
 
 	void SetUseCaptureMouse( bool state )
 	{
-		_base->SetUseCaptureMouse( state );
+		this->_base->SetUseCaptureMouse( state );
 	}
 
 	void SetMouseClickEnabled( int code, bool state )
 	{
-		_base->SetMouseClickEnabled( (MouseCode)code, state );
+		this->_base->SetMouseClickEnabled( (MouseCode)code, state );
 	}
 
 	bool IsMouseClickEnabled( int code )
 	{
-		return _base->IsMouseClickEnabled( (MouseCode)code );
+		return this->_base->IsMouseClickEnabled( (MouseCode)code );
 	}
 
 	void SetButtonBorderEnabled( bool state )
 	{
-		_base->SetButtonBorderEnabled( state );
+		this->_base->SetButtonBorderEnabled( state );
 	}
 
 	void SetDefaultColor( int fr, int fg, int fb, int fa, int br, int bg, int bb, int ba )
 	{
-		_base->SetDefaultColor( Color(fr, fg, fb, fa), Color(br, bg, bb, ba) );
+		this->_base->SetDefaultColor( Color(fr, fg, fb, fa), Color(br, bg, bb, ba) );
 	}
 
 	void SetArmedColor( int fr, int fg, int fb, int fa, int br, int bg, int bb, int ba )
 	{
-		_base->SetArmedColor( Color(fr, fg, fb, fa), Color(br, bg, bb, ba) );
+		this->_base->SetArmedColor( Color(fr, fg, fb, fa), Color(br, bg, bb, ba) );
 	}
 
 	void SetSelectedColor( int fr, int fg, int fb, int fa, int br, int bg, int bb, int ba )
 	{
-		_base->SetSelectedColor( Color(fr, fg, fb, fa), Color(br, bg, bb, ba) );
+		this->_base->SetSelectedColor( Color(fr, fg, fb, fa), Color(br, bg, bb, ba) );
 	}
 
 	void SetDepressedColor( int fr, int fg, int fb, int fa, int br, int bg, int bb, int ba )
 	{
-		_base->SetDepressedColor( Color(fr, fg, fb, fa), Color(br, bg, bb, ba) );
+		this->_base->SetDepressedColor( Color(fr, fg, fb, fa), Color(br, bg, bb, ba) );
 	}
 
 	void SetBlinkColor( int r, int g, int b, int a )
 	{
-		_base->SetBlinkColor( Color(r, g, b, a) );
+		this->_base->SetBlinkColor( Color(r, g, b, a) );
 	}
 
 	void SetArmedSound( const char *sound )
 	{
-		_base->SetReleasedSound( sound );
+		this->_base->SetReleasedSound( sound );
 	}
 
 	void SetDepressedSound( const char *sound )
 	{
-		_base->SetReleasedSound( sound );
+		this->_base->SetReleasedSound( sound );
 	}
 
 	void SetReleasedSound( const char *sound )
 	{
-		_base->SetReleasedSound( sound );
+		this->_base->SetReleasedSound( sound );
 	}
 };
 
@@ -1243,7 +1243,7 @@ class CScript_Panel_Helper : public IScript_Panel< CScript_Panel >
 public:
 	void SetCallback( const char* cb, HSCRIPT fn )
 	{
-		_base->SetCallback( cb, fn );
+		this->_base->SetCallback( cb, fn );
 	}
 };
 
