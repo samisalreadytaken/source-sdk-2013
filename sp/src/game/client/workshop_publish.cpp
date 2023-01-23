@@ -44,6 +44,18 @@
 #include "tier0/memdbgon.h"
 
 
+#ifdef JPEG_LIB_VERSION
+bool JPEGtoRGBA( const char *filename, CUtlMemory< byte > &buffer, int &width, int &height );
+bool JPEGtoRGBA( CUtlBuffer &fileBuffer, CUtlMemory< byte > &buffer, int &width, int &height );
+#endif
+
+#ifdef PNG_LIBPNG_VER
+bool PNGtoRGBA( const char *filename, CUtlMemory< byte > &buffer, int &width, int &height );
+bool PNGtoRGBA( CUtlBuffer &fileBuffer, CUtlMemory< byte > &buffer, int &width, int &height );
+#endif
+
+
+
 static const int g_nTagsGridRowCount = 3;
 static const int g_nTagsGridColumnCount = 3;
 
@@ -147,14 +159,6 @@ enum
 };
 
 
-// To remember what was selected before
-enum SelectedFileFilter
-{
-	FILE_FILTER_JPG = 0, // default
-	FILE_FILTER_PNG,
-	FILE_FILTER_GIF
-};
-
 
 
 class CWorkshopPublishDialog;
@@ -184,12 +188,24 @@ public:
 
 public:
 	void QueryItem( PublishedFileId_t );
-	void Refresh();
+	bool QueryAll();
 	void CreateItem();
 	void SubmitItemUpdate( PublishedFileId_t );
 	void DeleteItem( PublishedFileId_t );
 
 	UGCUpdateHandle_t GetItemUpdate() const { return m_hItemUpdate; }
+
+	void Refresh()
+	{
+		m_pList->RemoveAll();
+		m_nQueryPage = 1;
+
+		if ( QueryAll() )
+		{
+			m_nQueryTime = system()->GetTimeMillis();
+			m_pRefresh->SetEnabled( false );
+		}
+	}
 
 protected:
 	ListPanel *m_pList;
@@ -204,8 +220,8 @@ protected:
 	DHANDLE< CDeleteMessageBox > m_pDeleteMessageBox;
 	PublishedFileId_t m_nItemToDelete;
 
+	uint32 m_nQueryPage;
 	long m_nQueryTime;
-	int m_nLastUsedFileFilter;
 
 private:
 	void OnCreateItemResult( CreateItemResult_t *pResult, bool bIOFailure );
@@ -239,7 +255,10 @@ public:
 
 	MESSAGE_FUNC_CHARPTR( OnFileSelected, "FileSelected", fullpath );
 	MESSAGE_FUNC_CHARPTR( OnDirectorySelected, "DirectorySelected", dir );
+	MESSAGE_FUNC_PTR( OnTextChanged, "TextChanged", panel );
 
+	void SetPreviewImage( const char *filename );
+	void SetPreviewImage( CUtlBuffer &file, const char *filename );
 	void OnPublish();
 	void UpdateFields( KeyValues * );
 
@@ -266,24 +285,22 @@ private:
 	Label *m_pTagsLabel;
 	CSimpleGrid *m_pTagsGrid;
 
-	FileOpenDialog *m_pFileBrowser;
-	DirectorySelectDialog *m_pDirectoryBrowser;
-
 	DHANDLE< CUploadProgressBox > m_pProgressUpload;
-
-	bool m_bDownloadedTempFiles;
 };
-
 
 class CPreviewImage : public Panel
 {
+public:
+	bool m_bLoading;
+
 public:
 	CPreviewImage( Panel* pParent, const char *name ) : Panel( pParent, name ),
 		m_iTexture(-1),
 		m_nDrawWidth(0),
 		m_nDrawHeight(0),
 		m_s1(1.0f),
-		m_t1(1.0f)
+		m_t1(1.0f),
+		m_bLoading(0)
 	{
 	}
 
@@ -305,17 +322,60 @@ public:
 		}
 		else
 		{
-			surface()->DrawSetColor( 0, 0, 0, 255 );
-			// Panel size was increased to see user images better, draw the empty box a bit smaller
-			surface()->DrawFilledRect( 6, 20, GetWide()-30, GetTall() );
+			int wide, tall;
+			int textWide, textTall;
+			const wchar_t *text;
+			HFont font = scheme()->GetIScheme( GetScheme() )->GetFont( "DefaultFixedOutline", false );
+			GetSize( wide, tall );
+
+			// Transparent background box
+			surface()->DrawSetColor( 0, 0, 0, 127 );
+			surface()->DrawFilledRect( 0, 0, wide, tall );
+
+			if ( m_bLoading )
+			{
+				text = g_pVGuiLocalize->Find( "#GameUI_Loading" );
+			}
+			else
+			{
+				text = g_pVGuiLocalize->Find( "#WorkshopMgr_NoImage" );
+			}
+
+			surface()->GetTextSize( font, text, textWide, textTall );
+			surface()->DrawSetTextColor( 255, 255, 255, 255 );
+			surface()->DrawSetTextFont( font );
+			surface()->DrawSetTextPos( (wide - textWide) >> 1, (tall - textTall) >> 1 );
+			surface()->DrawPrintText( text, wcslen(text) );
 		}
+	}
+
+	// Open file browser when empty image box is clicked
+	void OnMousePressed( MouseCode code )
+	{
+		if ( code != MOUSE_LEFT )
+			return;
+
+		if ( m_iTexture > 0 || m_bLoading )
+			return;
+
+		CItemPublishDialog *pItemPublishDialog = (CItemPublishDialog *)GetParent();
+		pItemPublishDialog->OnCommand( "PreviewBrowse" );
+	}
+
+	void RemoveImage()
+	{
+		if ( m_iTexture > 0 )
+		{
+			surface()->DestroyTextureID( m_iTexture );
+			m_iTexture = -1;
+		}
+
+		m_bLoading = false;
 	}
 
 	void SetJPEGImage( const char *filename )
 	{
 #ifdef JPEG_LIB_VERSION
-		bool JPEGtoRGBA( const char *filename, CUtlMemory< byte > &buffer, int &width, int &height );
-
 		int imageWidth, imageHeight;
 		CUtlMemory< byte > image;
 
@@ -326,18 +386,36 @@ public:
 		}
 		else
 		{
-			if ( m_iTexture > 0 )
-				surface()->DestroyTextureID( m_iTexture );
-			m_iTexture = -1;
+			RemoveImage();
 		}
+#else
+		m_bLoading = true;
+#endif
+	}
+
+	void SetJPEGImage( CUtlBuffer &fileBuffer )
+	{
+#ifdef JPEG_LIB_VERSION
+		int imageWidth, imageHeight;
+		CUtlMemory< byte > image;
+
+		if ( JPEGtoRGBA( fileBuffer, image, imageWidth, imageHeight ) )
+		{
+			SetImageRGBA( image.Base(), imageWidth, imageHeight );
+			DevMsg( "Loaded jpeg %dx%d\n", imageWidth, imageHeight );
+		}
+		else
+		{
+			RemoveImage();
+		}
+#else
+		m_bLoading = true;
 #endif
 	}
 
 	void SetPNGImage( const char *filename )
 	{
 #ifdef PNG_LIBPNG_VER
-		bool PNGtoRGBA( const char *filename, CUtlMemory< byte > &buffer, int &width, int &height );
-
 		int imageWidth, imageHeight;
 		CUtlMemory< byte > image;
 
@@ -348,10 +426,30 @@ public:
 		}
 		else
 		{
-			if ( m_iTexture > 0 )
-				surface()->DestroyTextureID( m_iTexture );
-			m_iTexture = -1;
+			RemoveImage();
 		}
+#else
+		m_bLoading = true;
+#endif
+	}
+
+	void SetPNGImage( CUtlBuffer &fileBuffer )
+	{
+#ifdef PNG_LIBPNG_VER
+		int imageWidth, imageHeight;
+		CUtlMemory< byte > image;
+
+		if ( PNGtoRGBA( fileBuffer, image, imageWidth, imageHeight ) )
+		{
+			SetImageRGBA( image.Base(), imageWidth, imageHeight );
+			DevMsg( "Loaded png %dx%d\n", imageWidth, imageHeight );
+		}
+		else
+		{
+			RemoveImage();
+		}
+#else
+		m_bLoading = true;
 #endif
 	}
 
@@ -381,29 +479,13 @@ private:
 		if ( imageWidth > imageHeight )
 		{
 			// Fit to width
-			if ( imageWidth > panelWidth )
-			{
-				m_nDrawWidth = panelWidth;
-			}
-			else
-			{
-				m_nDrawWidth = imageWidth;
-			}
-
+			m_nDrawWidth = min( panelWidth, imageWidth );
 			m_nDrawHeight = imageHeight * m_nDrawWidth / imageWidth;
 		}
 		else
 		{
 			// Fit to height
-			if ( imageHeight > panelHeight )
-			{
-				m_nDrawHeight = panelHeight;
-			}
-			else
-			{
-				m_nDrawHeight = imageHeight;
-			}
-
+			m_nDrawHeight = min( panelHeight, imageHeight );
 			m_nDrawWidth = imageWidth * m_nDrawHeight / imageHeight;
 		}
 	}
@@ -482,9 +564,6 @@ private:
 
 
 #ifdef JPEG_LIB_VERSION
-bool JPEGtoRGBA( const char *filename, CUtlMemory< byte > &buffer, int &width, int &height );
-bool JPEGtoRGBA( CUtlBuffer &fileBuffer, CUtlMemory< byte > &buffer, int &width, int &height );
-
 struct JpegErrorHandler_t
 {
 	struct jpeg_error_mgr mgr;
@@ -511,8 +590,6 @@ struct JpegSourceMgr_t : jpeg_source_mgr
 	static void _skip_input_data( j_decompress_ptr cinfo, long num_bytes )
 	{
 		JpegSourceMgr_t *src = (JpegSourceMgr_t*)cinfo->src;
-		src->m_buffer->SeekGet( CUtlBuffer::SEEK_CURRENT, num_bytes );
-
 		src->next_input_byte += (size_t)num_bytes;
 		src->bytes_in_buffer -= (size_t)num_bytes;
 	}
@@ -528,11 +605,7 @@ struct JpegSourceMgr_t : jpeg_source_mgr
 
 		bytes_in_buffer = pBuffer->TellMaxPut();
 		next_input_byte = (const JOCTET*)pBuffer->Base();
-
-		m_buffer = pBuffer;
 	}
-
-	CUtlBuffer *m_buffer;
 };
 
 //
@@ -552,6 +625,9 @@ bool JPEGtoRGBA( const char *filename, CUtlMemory< byte > &buffer, int &width, i
 	return JPEGtoRGBA( fileBuffer, buffer, width, height );
 }
 
+//
+// TODO: Error codes
+//
 bool JPEGtoRGBA( CUtlBuffer &fileBuffer, CUtlMemory< byte > &buffer, int &width, int &height )
 {
 	//
@@ -578,6 +654,7 @@ bool JPEGtoRGBA( CUtlBuffer &fileBuffer, CUtlMemory< byte > &buffer, int &width,
 
 	if ( jpeg_read_header( &cinfo, TRUE ) != JPEG_HEADER_OK )
 	{
+		Warning( "Bad JPEG signature\n" );
 		jpeg_destroy_decompress( &cinfo );
 		return false;
 	}
@@ -595,7 +672,6 @@ bool JPEGtoRGBA( CUtlBuffer &fileBuffer, CUtlMemory< byte > &buffer, int &width,
 	if ( image_components != 4 )
 	{
 		Warning( "JPEG is not RGB\n" );
-
 		jpeg_destroy_decompress( &cinfo );
 		return false;
 	}
@@ -626,9 +702,6 @@ bool JPEGtoRGBA( CUtlBuffer &fileBuffer, CUtlMemory< byte > &buffer, int &width,
 #endif
 
 #ifdef PNG_LIBPNG_VER
-bool PNGtoRGBA( const char *filename, CUtlMemory< byte > &buffer, int &width, int &height );
-bool PNGtoRGBA( CUtlBuffer &fileBuffer, CUtlMemory< byte > &buffer, int &width, int &height );
-
 void ReadPNG_CUtlBuffer( png_structp png_ptr, png_bytep data, size_t length )
 {
 	if ( !png_ptr )
@@ -662,6 +735,9 @@ bool PNGtoRGBA( const char *filename, CUtlMemory< byte > &buffer, int &width, in
 	return PNGtoRGBA( fileBuffer, buffer, width, height );
 }
 
+//
+// TODO: Error codes
+//
 bool PNGtoRGBA( CUtlBuffer &fileBuffer, CUtlMemory< byte > &buffer, int &width, int &height )
 {
 	if ( png_sig_cmp( (png_const_bytep)fileBuffer.Base(), 0, 8 ) )
@@ -743,24 +819,23 @@ bool PNGtoRGBA( CUtlBuffer &fileBuffer, CUtlMemory< byte > &buffer, int &width, 
 	if ( image_height > ((size_t)(-1)) / rowbytes )
 	{
 		Warning( "PNG data buffer would be too large\n" );
+		png_destroy_read_struct( &png_ptr, &info_ptr, NULL );
 		return false;
 	}
 
 	buffer.Init( 0, rowbytes * image_height );
-
-	byte *image_data = buffer.Base();
 	row_pointers = (png_bytepp)malloc( image_height * sizeof(png_bytep) );
 
-	if ( !image_data || !row_pointers )
+	Assert( buffer.Base() && row_pointers );
+
+	if ( !row_pointers )
 	{
 		png_destroy_read_struct( &png_ptr, &info_ptr, NULL );
-		if ( row_pointers )
-			free( row_pointers );
 		return false;
 	}
 
 	for ( png_uint_32 i = 0; i < image_height; ++i )
-		row_pointers[i] = image_data + i*rowbytes;
+		row_pointers[i] = buffer.Base() + i*rowbytes;
 
 	png_read_image( png_ptr, row_pointers );
 	//png_read_end( png_ptr, NULL );
@@ -773,29 +848,16 @@ bool PNGtoRGBA( CUtlBuffer &fileBuffer, CUtlMemory< byte > &buffer, int &width, 
 #endif
 
 
-
-
-int __cdecl SortTitle( ListPanel *pPanel, const ListPanelItem &item1, const ListPanelItem &item2 )
-{
-	return V_stricmp( item1.kv->GetName(), item2.kv->GetName() );
-}
-
+// Most recent to oldest
 int __cdecl SortTimeUpdated( ListPanel *pPanel, const ListPanelItem &item1, const ListPanelItem &item2 )
 {
-	return item1.kv->GetInt("timeupdated_raw") - item2.kv->GetInt("timeupdated_raw");
+	return item2.kv->GetInt("timeupdated_raw") - item1.kv->GetInt("timeupdated_raw");
 }
 
+// Oldest to most recent
 int __cdecl SortTimeCreated( ListPanel *pPanel, const ListPanelItem &item1, const ListPanelItem &item2 )
 {
 	return item1.kv->GetInt("timecreated_raw") - item2.kv->GetInt("timecreated_raw");
-}
-
-void GetPreviewImageTempLocation( PublishedFileId_t fileId, char *out, int size )
-{
-	char path[MAX_PATH];
-	Verify( g_pFullFileSystem->GetCurrentDirectory( path, sizeof(path) ) );
-
-	V_snprintf( out, size, "%s%cpreviewfile_%llu.jpg", path, CORRECT_PATH_SEPARATOR, fileId );
 }
 
 
@@ -804,8 +866,7 @@ CWorkshopPublishDialog::CWorkshopPublishDialog() :
 	BaseClass( NULL, "WorkshopPublishDialog", false, false ),
 	m_pItemPublishDialog( NULL ),
 	m_nItemToDelete( 0 ),
-	m_hItemUpdate( k_UGCUpdateHandleInvalid ),
-	m_nLastUsedFileFilter( FILE_FILTER_JPG )
+	m_hItemUpdate( k_UGCUpdateHandleInvalid )
 {
 	Assert( !g_pWorkshopPublish );
 	g_pWorkshopPublish = this;
@@ -829,9 +890,9 @@ CWorkshopPublishDialog::CWorkshopPublishDialog() :
 	m_pList->AddColumnHeader( 3, "visibility", "Visibility", 20, ListPanel::ColumnFlags_e::COLUMN_RESIZEWITHWINDOW );
 	m_pList->AddColumnHeader( 4, "id", "ID", 24, ListPanel::ColumnFlags_e::COLUMN_RESIZEWITHWINDOW );
 
-	m_pList->SetSortFunc( 0, &SortTitle );
 	m_pList->SetSortFunc( 1, &SortTimeUpdated );
 	m_pList->SetSortFunc( 2, &SortTimeCreated );
+	m_pList->SetSortColumn( 1 );
 
 	m_pAdd = new Button( this, "Add", "Add", this, "Add" );
 	m_pDelete = new Button( this, "Delete", "Delete", this, "Delete" );
@@ -938,6 +999,7 @@ void CWorkshopPublishDialog::OnCommand( const char *command )
 
 		if ( m_pDeleteMessageBox )
 		{
+			Assert(0);
 			m_pDeleteMessageBox->Close();
 			return;
 		}
@@ -1016,10 +1078,7 @@ void CWorkshopPublishDialog::OnSteamUGCRequestUGCDetailsResult( SteamUGCRequestU
 	// Don't set downloaded image if preview was already set
 	if ( !m_pItemPublishDialog->m_pPreviewInput->GetTextLength() )
 	{
-		char temp[MAX_PATH];
-		GetPreviewImageTempLocation( details.m_nPublishedFileId, temp, sizeof(temp) );
-
-		SteamAPICall_t hSteamAPICall = steamapicontext->SteamRemoteStorage()->UGCDownloadToLocation( details.m_hPreviewFile, temp, 1 );
+		SteamAPICall_t hSteamAPICall = steamapicontext->SteamRemoteStorage()->UGCDownload( details.m_hPreviewFile, 1 );
 		if ( hSteamAPICall == k_uAPICallInvalid )
 		{
 			Warning( "CWorkshopPublishDialog::QueryItem() Steam API call failed\n" );
@@ -1027,6 +1086,7 @@ void CWorkshopPublishDialog::OnSteamUGCRequestUGCDetailsResult( SteamUGCRequestU
 		else
 		{
 			m_RemoteStorageDownloadUGCResult.Set( hSteamAPICall, this, &CWorkshopPublishDialog::OnRemoteStorageDownloadUGCResult );
+			m_pItemPublishDialog->m_pPreview->m_bLoading = true;
 		}
 	}
 }
@@ -1035,13 +1095,15 @@ void CWorkshopPublishDialog::OnRemoteStorageDownloadUGCResult( RemoteStorageDown
 {
 	Assert( !bIOFailure );
 
+	m_pItemPublishDialog->m_pPreview->m_bLoading = false;
+
 	if ( pResult->m_eResult != k_EResultOK )
 	{
 		Warning( "CWorkshopPublishDialog::OnRemoteStorageDownloadUGCResult() (%i) %s\n", pResult->m_eResult, GetResultDesc( pResult->m_eResult ) );
 		return;
 	}
 
-	DevMsg( "Downloaded %u bytes '%s'\n", pResult->m_nSizeInBytes, pResult->m_pchFileName );
+	DevMsg( "Downloaded %s '%s'\n", V_pretifymem( pResult->m_nSizeInBytes, 2, true ), pResult->m_pchFileName );
 
 	if ( !m_pItemPublishDialog )
 		return; // panel closed before download
@@ -1051,16 +1113,16 @@ void CWorkshopPublishDialog::OnRemoteStorageDownloadUGCResult( RemoteStorageDown
 	// Don't set downloaded image if preview was already set
 	if ( !m_pItemPublishDialog->m_pPreviewInput->GetTextLength() )
 	{
-		m_pItemPublishDialog->m_bDownloadedTempFiles = true;
+		byte *pImage = (byte*)stackalloc( pResult->m_nSizeInBytes * sizeof(byte) );
 
-		char fullpath[MAX_PATH];
-		GetPreviewImageTempLocation( m_pItemPublishDialog->m_item, fullpath, sizeof(fullpath) );
+		steamapicontext->SteamRemoteStorage()->UGCRead( pResult->m_hFile, pImage, pResult->m_nSizeInBytes, 0, k_EUGCRead_ContinueReadingUntilFinished );
 
-		m_pItemPublishDialog->m_pPreview->SetJPEGImage( fullpath );
+		CUtlBuffer buf( pImage, pResult->m_nSizeInBytes, CUtlBuffer::READ_ONLY );
+		m_pItemPublishDialog->SetPreviewImage( buf, pResult->m_pchFileName );
 	}
 }
 
-void CWorkshopPublishDialog::Refresh()
+bool CWorkshopPublishDialog::QueryAll()
 {
 	UGCQueryHandle_t hUGCQuery = steamapicontext->SteamUGC()->CreateQueryUserUGCRequest( ClientSteamContext().GetLocalPlayerSteamID().GetAccountID(),
 		k_EUserUGCList_Published,
@@ -1068,12 +1130,12 @@ void CWorkshopPublishDialog::Refresh()
 		k_EUserUGCListSortOrder_LastUpdatedDesc,
 		steamapicontext->SteamUtils()->GetAppID(),
 		steamapicontext->SteamUtils()->GetAppID(),
-		1 ); // TODO: Implement support for more than 50 items
+		m_nQueryPage );
 
 	if ( hUGCQuery == k_UGCQueryHandleInvalid )
 	{
 		Warning( "CWorkshopPublishDialog::Refresh() k_UGCQueryHandleInvalid\n" );
-		return;
+		return false;
 	}
 
 	SteamAPICall_t hSteamAPICall = steamapicontext->SteamUGC()->SendQueryUGCRequest( hUGCQuery );
@@ -1081,14 +1143,11 @@ void CWorkshopPublishDialog::Refresh()
 	{
 		Warning( "CWorkshopPublishDialog::Refresh() Steam API call failed\n" );
 		steamapicontext->SteamUGC()->ReleaseQueryUGCRequest( hUGCQuery );
-		return;
+		return false;
 	}
 
 	m_SteamUGCQueryCompleted.Set( hSteamAPICall, this, &CWorkshopPublishDialog::OnSteamUGCQueryCompleted );
-
-	m_nQueryTime = system()->GetTimeMillis();
-	m_pList->RemoveAll();
-	m_pRefresh->SetEnabled( false );
+	return true;
 }
 
 void CWorkshopPublishDialog::OnSteamUGCQueryCompleted( SteamUGCQueryCompleted_t *pResult, bool bIOFailure )
@@ -1120,7 +1179,7 @@ void CWorkshopPublishDialog::OnSteamUGCQueryCompleted( SteamUGCQueryCompleted_t 
 			continue;
 		}
 
-		CFmtStr strID( "%llu", details.m_nPublishedFileId );
+		CFmtStrN< 21 > strID( "%llu", details.m_nPublishedFileId );
 
 		int idx = m_pList->GetItem( strID );
 		if ( idx == -1 )
@@ -1138,14 +1197,15 @@ void CWorkshopPublishDialog::OnSteamUGCQueryCompleted( SteamUGCQueryCompleted_t 
 		// Long description is set on QueryItem()
 		//data->SetString( "description", details.m_rgchDescription );
 
+		// RFC3339 format
 		time_t t = details.m_rtimeUpdated;
 		tm *date = localtime( &t );
-		data->SetString( "timeupdated", CFmtStr("%d-%02d-%02d %02d:%02d:%02d",
+		data->SetString( "timeupdated", CFmtStrN< 32 >("%d-%02d-%02d %02d:%02d:%02d",
 			date->tm_year+1900, date->tm_mon+1, date->tm_mday, date->tm_hour, date->tm_min, date->tm_sec) );
 
 		t = details.m_rtimeCreated;
 		date = localtime( &t );
-		data->SetString( "timecreated", CFmtStr("%d-%02d-%02d %02d:%02d:%02d",
+		data->SetString( "timecreated", CFmtStrN< 32 >("%d-%02d-%02d %02d:%02d:%02d",
 			date->tm_year+1900, date->tm_mon+1, date->tm_mday, date->tm_hour, date->tm_min, date->tm_sec) );
 
 		// for sorting
@@ -1179,8 +1239,14 @@ void CWorkshopPublishDialog::OnSteamUGCQueryCompleted( SteamUGCQueryCompleted_t 
 
 	steamapicontext->SteamUGC()->ReleaseQueryUGCRequest( pResult->m_handle );
 
+	if ( pResult->m_unNumResultsReturned == kNumUGCResultsPerPage )
+	{
+		m_nQueryPage++;
+		if ( QueryAll() )
+			return;
+	}
+
 	Msg( "Completed query in %f seconds\n", (float)(system()->GetTimeMillis() - m_nQueryTime) / 1e3f );
-	m_nQueryTime = 0;
 
 	m_pRefresh->SetEnabled( true );
 }
@@ -1212,6 +1278,8 @@ void CWorkshopPublishDialog::OnCreateItemResult( CreateItemResult_t *pResult, bo
 		Warning( "User needs to accept workshop legal agreement\n" );
 	}
 
+	m_pItemPublishDialog->m_item = pResult->m_nPublishedFileId;
+
 	SubmitItemUpdate( pResult->m_nPublishedFileId );
 
 	// Update labels
@@ -1224,6 +1292,7 @@ void CWorkshopPublishDialog::SubmitItemUpdate( PublishedFileId_t id )
 
 	char pszTitle[ k_cchPublishedDocumentTitleMax - 1 ];
 	m_pItemPublishDialog->m_pTitleInput->GetText( pszTitle, sizeof(pszTitle) );
+	Q_AggressiveStripPrecedingAndTrailingWhitespace( pszTitle );
 
 	char pszDesc[ k_cchPublishedDocumentDescriptionMax ];
 	m_pItemPublishDialog->m_pDescInput->GetText( pszDesc, sizeof(pszDesc) );
@@ -1238,20 +1307,6 @@ void CWorkshopPublishDialog::SubmitItemUpdate( PublishedFileId_t id )
 	m_pItemPublishDialog->m_pChangesInput->GetText( pszChanges, sizeof(pszChanges) );
 
 	int visibility = m_pItemPublishDialog->m_pVisibility->GetActiveItemUserData()->GetInt();
-
-	UGCUpdateHandle_t item = m_hItemUpdate = steamapicontext->SteamUGC()->StartItemUpdate( steamapicontext->SteamUtils()->GetAppID(), id );
-
-	if ( pszTitle[0] )
-		Verify( steamapicontext->SteamUGC()->SetItemTitle( item, pszTitle ) );
-
-	if ( pszDesc[0] )
-		Verify( steamapicontext->SteamUGC()->SetItemDescription( item, pszDesc ) );
-
-	if ( pszContent[0] )
-		Verify( steamapicontext->SteamUGC()->SetItemContent( item, pszContent ) );
-
-	if ( pszPreview[0] )
-		Verify( steamapicontext->SteamUGC()->SetItemPreview( item, pszPreview ) );
 
 	CUtlStringList vecTags;
 	SteamParamStringArray_t tags;
@@ -1269,6 +1324,20 @@ void CWorkshopPublishDialog::SubmitItemUpdate( PublishedFileId_t id )
 			}
 		}
 	}
+
+	UGCUpdateHandle_t item = m_hItemUpdate = steamapicontext->SteamUGC()->StartItemUpdate( steamapicontext->SteamUtils()->GetAppID(), id );
+
+	if ( pszTitle[0] )
+		Verify( steamapicontext->SteamUGC()->SetItemTitle( item, pszTitle ) );
+
+	if ( pszDesc[0] )
+		Verify( steamapicontext->SteamUGC()->SetItemDescription( item, pszDesc ) );
+
+	if ( pszContent[0] )
+		Verify( steamapicontext->SteamUGC()->SetItemContent( item, pszContent ) );
+
+	if ( pszPreview[0] )
+		Verify( steamapicontext->SteamUGC()->SetItemPreview( item, pszPreview ) );
 
 	if ( tags.m_nNumStrings )
 	{
@@ -1299,9 +1368,15 @@ void CWorkshopPublishDialog::OnSubmitItemUpdateResult( SubmitItemUpdateResult_t 
 	{
 		Warning( "CWorkshopPublishDialog::OnSubmitItemUpdateResult() (%i) %s\n", pResult->m_eResult, GetResultDesc( pResult->m_eResult ) );
 	}
-	else if ( pResult->m_bUserNeedsToAcceptWorkshopLegalAgreement )
+	else
 	{
-		Warning( "User needs to accept workshop legal agreement\n" );
+		if ( pResult->m_bUserNeedsToAcceptWorkshopLegalAgreement )
+		{
+			Warning( "User needs to accept workshop legal agreement\n" );
+		}
+
+		// Open the page in Steam
+		system()->ShellExecute( "open", CFmtStrN< 64 >( "steam://url/CommunityFilePage/%llu", m_pItemPublishDialog->m_item ) );
 	}
 
 	m_hItemUpdate = k_UGCUpdateHandleInvalid;
@@ -1311,7 +1386,6 @@ void CWorkshopPublishDialog::OnSubmitItemUpdateResult( SubmitItemUpdateResult_t 
 		if ( m_pItemPublishDialog->m_pProgressUpload )
 		{
 			m_pItemPublishDialog->m_pProgressUpload->Close();
-			m_pItemPublishDialog->m_pProgressUpload = NULL;
 		}
 
 		m_pItemPublishDialog->Close();
@@ -1326,19 +1400,22 @@ void CWorkshopPublishDialog::OnSubmitItemUpdateResult( SubmitItemUpdateResult_t 
 void CWorkshopPublishDialog::DeleteItem( PublishedFileId_t id )
 {
 #ifdef _DEBUG
-	// Only allow deletion of items in the list
+	// Warn if the item is not in the list
 	{
-		PublishedFileId_t inID = id;
-		id = 0;
+		PublishedFileId_t inID = 0;
 		for ( int i = m_pList->FirstItem(); i != m_pList->InvalidItemID(); i = m_pList->NextItem(i) )
 		{
-			if ( inID == m_pList->GetItemData(i)->kv->GetUint64("id") )
+			if ( id == m_pList->GetItemData(i)->kv->GetUint64("id") )
 			{
-				id = inID;
+				inID = id;
 				break;
 			}
 		}
-		Assert( id );
+
+		if ( !inID && id )
+		{
+			DevWarning( "Deleting file from outside of the list %llu\n", id );
+		}
 	}
 #endif
 
@@ -1396,10 +1473,7 @@ void CWorkshopPublishDialog::OnDeleteItemResult( RemoteStorageDeletePublishedFil
 
 CItemPublishDialog::CItemPublishDialog( Panel *pParent ) :
 	BaseClass( pParent, "ItemDialog", false, false ),
-	m_item( 0 ),
-	m_pFileBrowser( NULL ),
-	m_pDirectoryBrowser( NULL ),
-	m_bDownloadedTempFiles( 0 )
+	m_item( 0 )
 {
 	SetVisible( true );
 	SetTitle( "Item Publish", false );
@@ -1415,16 +1489,23 @@ CItemPublishDialog::CItemPublishDialog( Panel *pParent ) :
 	m_pTitleInput = new TextEntry( this, "title" );
 	m_pTitleInput->SetMaximumCharCount( k_cchPublishedDocumentTitleMax - 1 );
 	m_pTitleInput->SetMultiline( false );
+	m_pTitleInput->SetAllowNonAsciiCharacters( true );
 
 	m_pDescLabel = new Label( this, NULL, "Description:" );
 	m_pDescInput = new TextEntry( this, "desc" );
 	m_pDescInput->SetMaximumCharCount( k_cchPublishedDocumentDescriptionMax - 1 );
 	m_pDescInput->SetMultiline( true );
+	m_pDescInput->SetVerticalScrollbar( true );
+	m_pDescInput->SetCatchEnterKey( true );
+	m_pDescInput->SetAllowNonAsciiCharacters( true );
 
 	m_pChangesLabel = new Label( this, NULL, "Changes this update:" );
 	m_pChangesInput = new TextEntry( this, "changes" );
 	m_pChangesInput->SetMaximumCharCount( k_cchPublishedDocumentChangeDescriptionMax - 1 );
 	m_pChangesInput->SetMultiline( true );
+	m_pChangesInput->SetVerticalScrollbar( true );
+	m_pChangesInput->SetCatchEnterKey( true );
+	m_pChangesInput->SetAllowNonAsciiCharacters( true );
 
 	m_pPreviewLabel = new Label( this, NULL, "Preview Image:" );
 	m_pPreviewInput = new TextEntry( this, "previewinput" );
@@ -1435,7 +1516,9 @@ CItemPublishDialog::CItemPublishDialog( Panel *pParent ) :
 	m_pContentInput = new TextEntry( this, "content" );
 	m_pContentInput->SetMaximumCharCount( MAX_PATH - 1 );
 	m_pContentInput->SetMultiline( false );
-
+#if 0
+	m_pContentSize = new Label( this, NULL, "" );
+#endif
 	m_pVisibilityLabel = new Label( this, NULL, "Visibility:" );
 	m_pVisibility = new ComboBox( this, "visibility", 4, false );
 	// NOTE: Add in the order of the raw values. This is read as int in UpdateFields
@@ -1534,7 +1617,12 @@ void CItemPublishDialog::PerformLayout()
 
 	m_pPreviewBrowse->SetPos( 540, 330 );
 	m_pPreviewBrowse->SetSize( 76, 24 );
-
+#if 0
+	int w, t;
+	m_pContentLabel->GetContentSize( w, t );
+	m_pContentSize->SetPos( w + 16, 354 );
+	m_pContentSize->SetSize( 270, 24 );
+#endif
 	m_pContentLabel->SetPos( 26, 354 );
 	m_pContentLabel->SetSize( 270, 24 );
 
@@ -1571,18 +1659,6 @@ void CItemPublishDialog::OnClose()
 	g_pWorkshopPublish->MoveToFront();
 	g_pWorkshopPublish->m_pItemPublishDialog = NULL;
 
-	if ( m_bDownloadedTempFiles )
-	{
-		char fullpath[MAX_PATH];
-		GetPreviewImageTempLocation( m_item, fullpath, sizeof(fullpath) );
-
-		if ( g_pFullFileSystem->FileExists( fullpath ) )
-		{
-			g_pFullFileSystem->RemoveFile( fullpath );
-			DevMsg( "Remove temp file: '%s'\n", fullpath );
-		}
-	}
-
 	BaseClass::OnClose();
 }
 
@@ -1594,46 +1670,28 @@ void CItemPublishDialog::OnCommand( const char *command )
 	}
 	else if ( !V_stricmp( "PreviewBrowse", command ) )
 	{
-		m_pFileBrowser = new FileOpenDialog( this, "Browse preview image", FileOpenDialogType_t::FOD_OPEN );
+		FileOpenDialog *pFileBrowser = new FileOpenDialog( this, "Browse preview image", FileOpenDialogType_t::FOD_OPEN );
+		pFileBrowser->AddFilter( "*.*", "All files (*.*)", false );
+		pFileBrowser->AddFilter( "*.jpg;*.jpeg;*.png;*.gif;*.bmp", "Image files (*.jpg;*.jpeg;*.png;*.gif;*.bmp)", true );
 
-		// Enable the filter that was chosen before
-		bool bJPG = 0, bPNG = 0, bGIF = 0;
-		switch ( g_pWorkshopPublish->m_nLastUsedFileFilter )
-		{
-			case FILE_FILTER_JPG:
-				bJPG = true;
-				break;
-			case FILE_FILTER_PNG:
-				bPNG = true;
-				break;
-			case FILE_FILTER_GIF:
-				bGIF = true;
-				break;
-		}
-
-		m_pFileBrowser->AddFilter( "*.*", "All files (*.*)", false );
-		m_pFileBrowser->AddFilter( "*.jpg;*.jpeg", "JPEG (*.jpg;*.jpeg)", bJPG );
-		m_pFileBrowser->AddFilter( "*.png", "PNG (*.png)", bPNG );
-		m_pFileBrowser->AddFilter( "*.gif", "GIF (*.gif)", bGIF );
-
-		m_pFileBrowser->AddActionSignalTarget( this );
-		m_pFileBrowser->SetDeleteSelfOnClose( true );
-		m_pFileBrowser->SetVisible( true );
-		m_pFileBrowser->DoModal();
+		pFileBrowser->AddActionSignalTarget( this );
+		pFileBrowser->SetDeleteSelfOnClose( true );
+		pFileBrowser->SetVisible( true );
+		pFileBrowser->DoModal();
 	}
 	else if ( !V_stricmp( "ContentBrowse", command ) )
 	{
 		// NOTE: DirectorySelectDialog sucks, but FileOpenDialogType_t::FOD_SELECT_DIRECTORY does not work
-		m_pDirectoryBrowser = new DirectorySelectDialog( this, "Browse content directory" );
-		m_pDirectoryBrowser->MakeReadyForUse();
-		m_pDirectoryBrowser->AddActionSignalTarget( this );
-		m_pDirectoryBrowser->SetDeleteSelfOnClose( true );
-		m_pDirectoryBrowser->SetVisible( true );
-		m_pDirectoryBrowser->DoModal();
+		DirectorySelectDialog *pDirectoryBrowser = new DirectorySelectDialog( this, "Browse content directory" );
+		pDirectoryBrowser->MakeReadyForUse();
+		pDirectoryBrowser->AddActionSignalTarget( this );
+		pDirectoryBrowser->SetDeleteSelfOnClose( true );
+		pDirectoryBrowser->SetVisible( true );
+		pDirectoryBrowser->DoModal();
 
 		char pLocalPath[255];
 		g_pFullFileSystem->GetCurrentDirectory( pLocalPath, 255 );
-		m_pDirectoryBrowser->SetStartDirectory( pLocalPath );
+		pDirectoryBrowser->SetStartDirectory( pLocalPath );
 	}
 	else
 	{
@@ -1656,60 +1714,77 @@ bool IsInvalidInput( const char *pIn )
 
 void CItemPublishDialog::OnPublish()
 {
-	char pszPreview[ 64 ];
+	char pszPreview[ MAX_PATH ];
 	m_pPreviewInput->GetText( pszPreview, sizeof(pszPreview) );
 
 	// Require preview image for initial commit
 	if ( !m_item && IsInvalidInput( pszPreview ) )
 	{
 		Warning( "Preview image field empty\n" );
-		m_pPreviewInput->SetText( "" );
+		m_pPreviewInput->SetText( L"" );
+		m_pPreviewInput->RequestFocus();
+		return;
+	}
+	else if ( !m_item && !g_pFullFileSystem->FileExists( pszPreview ) )
+	{
+		Warning( "Preview image does not exist\n" );
+		m_pPreviewInput->SelectAllText( true );
 		m_pPreviewInput->RequestFocus();
 		return;
 	}
 
-	char pszContent[ 64 ];
+	char pszContent[ MAX_PATH ];
 	m_pContentInput->GetText( pszContent, sizeof(pszContent) );
 
 	// Require content for initial commit
 	if ( !m_item && IsInvalidInput( pszContent ) )
 	{
 		Warning( "Content field empty\n" );
-		m_pContentInput->SetText( "" );
+		m_pContentInput->SetText( L"" );
+		m_pContentInput->RequestFocus();
+		return;
+	}
+	else if ( !m_item && !g_pFullFileSystem->IsDirectory( pszContent ) && !g_pFullFileSystem->FileExists( pszContent ) )
+	{
+		Warning( "Content does not exist\n" );
+		m_pContentInput->SelectAllText( true );
 		m_pContentInput->RequestFocus();
 		return;
 	}
 
-	char pszTitle[ k_cchPublishedDocumentTitleMax - 1 ];
+	wchar_t pszTitle[ ((k_cchPublishedDocumentTitleMax - 1) * sizeof(char))/sizeof(wchar_t) ];
 	m_pTitleInput->GetText( pszTitle, sizeof(pszTitle) );
+	Q_AggressiveStripPrecedingAndTrailingWhitespaceW( pszTitle );
 
 	// Require title
-	if ( IsInvalidInput( pszTitle ) )
+	if ( !pszTitle[0] )
 	{
 		Warning( "Title field empty\n" );
-		m_pTitleInput->SetText( "" );
+		m_pTitleInput->SetText( L"" );
 		m_pTitleInput->RequestFocus();
 		return;
 	}
 
-	char pszDesc[ 2 ];
+	wchar_t pszDesc[ 1024 ];
 	m_pDescInput->GetText( pszDesc, sizeof(pszDesc) );
+	Q_AggressiveStripPrecedingAndTrailingWhitespaceW( pszDesc );
 
 	// Require description for initial commit
-	if ( !m_item && IsInvalidInput( pszDesc ) )
+	if ( !m_item && !pszDesc[0] )
 	{
 		Warning( "Description field empty\n" );
-		m_pDescInput->SetText( "" );
+		m_pDescInput->SetText( L"" );
 		m_pDescInput->RequestFocus();
 		return;
 	}
 
-	char pszChanges[ 2 ];
+	wchar_t pszChanges[ 1024 ];
 	m_pChangesInput->GetText( pszChanges, sizeof(pszChanges) );
+	Q_AggressiveStripPrecedingAndTrailingWhitespaceW( pszChanges );
 
 	// If content is updated, request change notes once. (Allow initial commit without message)
 	// This is also required in L4D2 and HLVR workshop tools.
-	if ( m_item && pszContent[0] && IsInvalidInput( pszChanges ) )
+	if ( m_item && pszContent[0] && !pszChanges[0] )
 	{
 		Warning( "Change notes field empty\n" );
 		m_pChangesInput->SetText( "Undocumented changes" );
@@ -1732,27 +1807,108 @@ void CItemPublishDialog::OnPublish()
 
 	m_pProgressUpload = new CUploadProgressBox( this );
 }
+#if 0
+void CItemPublishDialog::SetAddonContent( const char *filename )
+{
+	unsigned int size = g_pFullFileSystem->Size( filename );
+	if ( size )
+	{
+		m_pContentSize->SetText( V_pretifymem( size, 2, true ) );
+	}
+	else
+	{
+		m_pContentSize->SetText( "" );
+	}
+}
+#endif
+void CItemPublishDialog::SetPreviewImage( const char *filename )
+{
+	const char *ext = V_GetFileExtension( filename );
+
+	if ( !ext )
+	{
+		m_pPreview->RemoveImage();
+	}
+	else if ( !V_stricmp( ext, "jpg" ) || !V_stricmp( ext, "jpeg" ) )
+	{
+		m_pPreview->SetJPEGImage( filename );
+	}
+	else if ( !V_stricmp( ext, "png" ) )
+	{
+		m_pPreview->SetPNGImage( filename );
+	}
+	else
+	{
+		m_pPreview->RemoveImage();
+
+		// if this is a type that cannot be loaded, always draw "loading" message
+		m_pPreview->m_bLoading = true;
+	}
+}
+
+void CItemPublishDialog::SetPreviewImage( CUtlBuffer &file, const char *filename )
+{
+	const char *ext = V_GetFileExtension( filename );
+
+	if ( !ext )
+	{
+		m_pPreview->RemoveImage();
+	}
+	else if ( !V_stricmp( ext, "jpg" ) || !V_stricmp( ext, "jpeg" ) )
+	{
+		m_pPreview->SetJPEGImage( file );
+	}
+	else if ( !V_stricmp( ext, "png" ) )
+	{
+		m_pPreview->SetPNGImage( file );
+	}
+	else
+	{
+		m_pPreview->RemoveImage();
+
+		// if this is a type that cannot be loaded, always draw "loading" message
+		m_pPreview->m_bLoading = true;
+	}
+}
+
+void CItemPublishDialog::OnTextChanged( Panel *panel )
+{
+	if ( panel == m_pPreviewInput )
+	{
+		// Try to load image from current text
+		if ( m_pPreviewInput->GetTextLength() )
+		{
+			char path[ MAX_PATH ];
+			m_pPreviewInput->GetText( path, sizeof(path) );
+			SetPreviewImage( path );
+		}
+		else
+		{
+			m_pPreview->RemoveImage();
+		}
+	}
+#if 0
+	else if ( panel == m_pContentInput )
+	{
+		// Get content size
+		if ( m_pContentInput->GetTextLength() )
+		{
+			char path[ MAX_PATH ];
+			m_pContentInput->GetText( path, sizeof(path) );
+			SetAddonContent( path );
+		}
+		else
+		{
+			m_pContentSize->SetText( "" );
+		}
+	}
+#endif
+}
 
 void CItemPublishDialog::OnFileSelected( const char *fullpath )
 {
 	m_pPreviewInput->SetText( fullpath );
-
-	const char *ext = V_GetFileExtension( fullpath );
-
-	if ( !V_stricmp( ext, "jpg" ) || !V_stricmp( ext, "jpeg" ) )
-	{
-		m_pPreview->SetJPEGImage( fullpath );
-		g_pWorkshopPublish->m_nLastUsedFileFilter = FILE_FILTER_JPG;
-	}
-	else if ( !V_stricmp( ext, "png" ) )
-	{
-		m_pPreview->SetPNGImage( fullpath );
-		g_pWorkshopPublish->m_nLastUsedFileFilter = FILE_FILTER_PNG;
-	}
-	else if ( !V_stricmp( ext, "gif" ) )
-	{
-		g_pWorkshopPublish->m_nLastUsedFileFilter = FILE_FILTER_GIF;
-	}
+	SetPreviewImage( fullpath );
 
 	// Set content to the same path as preview image if it was not already set
 	if ( !m_pContentInput->GetTextLength() )
@@ -1798,6 +1954,7 @@ void CItemPublishDialog::UpdateFields( KeyValues *data )
 {
 	m_item = data->GetUint64("id");
 	SetTitle( CFmtStr("Item Publish (%llu)", m_item), false );
+	m_pPublish->SetText( "Update" );
 
 	m_pTitleInput->SetText( data->GetString("title") );
 	m_pDescInput->SetText( data->GetString("description") );
@@ -1824,8 +1981,6 @@ void CItemPublishDialog::UpdateFields( KeyValues *data )
 			}
 		}
 	}
-
-	m_pPublish->SetText( "Update" );
 }
 
 
@@ -1833,7 +1988,7 @@ CModalMessageBox::CModalMessageBox( Panel *pParent, const char *msg ) :
 	BaseClass( pParent, NULL, false, false )
 {
 	SetVisible( true );
-	SetTitle( "", false );
+	SetTitle( L"", false );
 	SetDeleteSelfOnClose( true );
 	SetCloseButtonVisible( false );
 	SetMoveable( false );
@@ -2014,7 +2169,7 @@ void CDeleteMessageBox::ApplySchemeSettings( IScheme *pScheme )
 
 	m_pOkButton->SetDefaultColor( m_pOkButton->GetButtonDefaultFgColor(), dark );
 	m_pOkButton->SetSelectedColor( m_pOkButton->GetButtonSelectedFgColor(), dark );
-	m_pOkButton->SetDepressedColor( m_pOkButton->GetButtonDepressedFgColor(), dark );
+	m_pOkButton->SetDepressedColor( m_pOkButton->GetButtonDepressedFgColor(), bright );
 	m_pOkButton->SetArmedColor( m_pOkButton->GetButtonArmedFgColor(), bright );
 }
 
